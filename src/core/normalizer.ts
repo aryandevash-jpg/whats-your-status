@@ -13,16 +13,16 @@ export function buildNormalizedSnapshot(params: {
   if (params.parsed.hreflangLinks.length === 0 && !params.parsed.htmlLang) {
     issues.push("No hreflang alternates and no html[lang] attribute");
   }
-  if (params.pageSpeed.score !== null && params.pageSpeed.score < 80) {
-    issues.push(`Lighthouse SEO category score is below 80 (${params.pageSpeed.score})`);
+  if (params.pageSpeed.categoryScore !== null && params.pageSpeed.categoryScore < 80) {
+    issues.push(`Lighthouse SEO category score is below 80 (${params.pageSpeed.categoryScore}/100).`);
   }
 
-  const lowScoreAudits = Object.entries(params.pageSpeed.audits)
-    .filter(([, a]) => typeof a.score === "number" && a.score < 50)
-    .slice(0, 8)
-    .map(([id]) => `Audit ${id} has low score`);
+  const failedSeoChecks = Object.entries(params.pageSpeed.audits)
+    .filter(([, a]) => a.outcome === "fail" || a.outcome === "error")
+    .slice(0, 12)
+    .map(([id, a]) => `SEO: ${a.title ?? id} (${id}) — ${a.outcomeLabel}`);
 
-  issues.push(...lowScoreAudits);
+  issues.push(...failedSeoChecks);
 
   return {
     url: params.url,

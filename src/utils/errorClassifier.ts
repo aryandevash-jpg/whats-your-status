@@ -20,7 +20,13 @@ export function classifyError(err: unknown): ClassifiedError {
     if (code === "ECONNABORTED" || code === "ETIMEDOUT") {
       return { class: "retryable", message: err.message, code, status };
     }
-    if (code === "ECONNRESET" || code === "ENOTFOUND" || code === "EAI_AGAIN" || code === "ECONNREFUSED") {
+    if (
+      code === "ECONNRESET" ||
+      code === "EPIPE" ||
+      code === "ENOTFOUND" ||
+      code === "EAI_AGAIN" ||
+      code === "ECONNREFUSED"
+    ) {
       return { class: "retryable", message: err.message, code, status };
     }
     if (status === 429) {

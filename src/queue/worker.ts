@@ -7,8 +7,15 @@ import type { AnalyzeJobPayload } from "../types/index.js";
 import { classifyError, isRetryable } from "../utils/errorClassifier.js";
 import { logger } from "../utils/logger.js";
 import * as jobStore from "../storage/jobStore.js";
+import { envClampedInt } from "../utils/httpTimeouts.js";
 
 const connection = createBullConnection();
+
+/** Limits parallel PageSpeed/Gemini work per process (each job hits PageSpeed). Default 1 reduces connection churn. */
+const WORKER_CONCURRENCY = envClampedInt("WORKER_CONCURRENCY", 1, 1, 20);
+
+/** BullMQ lock must cover worst-case PageSpeed (several long attempts) + scrape + Gemini. */
+const WORKER_LOCK_DURATION_MS = envClampedInt("WORKER_LOCK_DURATION_MS", 1_800_000, 120_000, 3_600_000);
 
 const worker = new Worker<AnalyzeJobPayload>(
   QUEUE_NAME,
@@ -43,7 +50,11 @@ const worker = new Worker<AnalyzeJobPayload>(
       throw err;
     }
   },
-  { connection }
+  {
+    connection,
+    concurrency: WORKER_CONCURRENCY,
+    lockDuration: WORKER_LOCK_DURATION_MS,
+  }
 );
 
 worker.on("failed", async (job, err) => {
@@ -67,4 +78,9 @@ worker.on("completed", (job) => {
   logger.info("worker_job_completed_event", { jobId: job.id });
 });
 
-logger.info("worker_started", { queue: QUEUE_NAME, redis: process.env.REDIS_URL ?? "default" });
+logger.info("worker_started", {
+  queue: QUEUE_NAME,
+  redis: process.env.REDIS_URL ?? "default",
+  concurrency: WORKER_CONCURRENCY,
+  lockDurationMs: WORKER_LOCK_DURATION_MS,
+});

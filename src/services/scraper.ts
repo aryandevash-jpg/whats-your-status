@@ -1,7 +1,8 @@
 import axios from "axios";
+import { httpTimeoutMs } from "../utils/httpTimeouts.js";
 import { logger } from "../utils/logger.js";
 
-const TIMEOUT_MS = 8000;
+const TIMEOUT_MS = httpTimeoutMs("SCRAPE_TIMEOUT_MS", 30_000);
 
 export interface ScrapeResult {
   html: string;

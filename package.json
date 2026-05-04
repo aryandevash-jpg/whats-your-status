@@ -11,9 +11,12 @@
     "start:api": "node dist/api/server.js",
     "start:worker": "node dist/queue/worker.js",
     "dev:api": "tsx watch src/api/server.ts",
-    "dev:worker": "tsx watch src/queue/worker.ts"
+    "dev:worker": "tsx watch src/queue/worker.ts",
+    "dev:web": "npm run dev --prefix web",
+    "build:web": "npm run build --prefix web"
   },
   "dependencies": {
+    "@fastify/cors": "^10.1.0",
     "@google/generative-ai": "^0.21.0",
     "axios": "^1.7.9",
     "bullmq": "^5.34.3",

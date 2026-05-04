@@ -1,9 +1,16 @@
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import type { GeminiStructuredOutput, NormalizedSnapshot } from "../types/index.js";
+import { httpTimeoutMs } from "../utils/httpTimeouts.js";
 import { logger } from "../utils/logger.js";
 
-const MODEL_ID = "gemini-1.5-flash";
-const TIMEOUT_MS = 8000;
+const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
+
+function resolveModelId(): string {
+  const id = process.env.GEMINI_MODEL?.trim();
+  return id || DEFAULT_MODEL_ID;
+}
+
+const TIMEOUT_MS = httpTimeoutMs("GEMINI_TIMEOUT_MS", 60_000);
 
 const responseSchema = {
   type: SchemaType.OBJECT,
@@ -18,20 +25,20 @@ const responseSchema = {
       },
       required: ["title", "description"],
     },
-    code_changes: {
+    recommendations: {
       type: SchemaType.ARRAY,
       items: {
         type: SchemaType.OBJECT,
         properties: {
-          file: { type: SchemaType.STRING },
-          before: { type: SchemaType.STRING },
-          after: { type: SchemaType.STRING },
+          topic: { type: SchemaType.STRING },
+          rationale: { type: SchemaType.STRING },
+          action: { type: SchemaType.STRING },
         },
-        required: ["file", "before", "after"],
+        required: ["topic", "rationale", "action"],
       },
     },
   },
-  required: ["primary_keywords", "secondary_keywords", "meta_updates", "code_changes"],
+  required: ["primary_keywords", "secondary_keywords", "meta_updates", "recommendations"],
 };
 
 function getClient(): GoogleGenerativeAI {
@@ -51,12 +58,13 @@ function isValidShape(obj: unknown): obj is GeminiStructuredOutput {
   if (!mu || typeof mu !== "object") return false;
   const m = mu as Record<string, unknown>;
   if (typeof m.title !== "string" || typeof m.description !== "string") return false;
-  if (!Array.isArray(o.code_changes)) return false;
-  for (const c of o.code_changes) {
-    if (!c || typeof c !== "object") return false;
-    const cc = c as Record<string, unknown>;
-    if (typeof cc.file !== "string" || typeof cc.before !== "string" || typeof cc.after !== "string")
-      return false;
+  if (!Array.isArray(o.recommendations) || o.recommendations.length < 1) return false;
+  for (const r of o.recommendations) {
+    if (!r || typeof r !== "object") return false;
+    const rec = r as Record<string, unknown>;
+    if (typeof rec.topic !== "string" || !rec.topic.trim()) return false;
+    if (typeof rec.rationale !== "string" || !rec.rationale.trim()) return false;
+    if (typeof rec.action !== "string" || !rec.action.trim()) return false;
   }
   return true;
 }
@@ -64,30 +72,40 @@ function isValidShape(obj: unknown): obj is GeminiStructuredOutput {
 export async function generateRecommendations(snapshot: NormalizedSnapshot): Promise<GeminiStructuredOutput> {
   const genAI = getClient();
   const model = genAI.getGenerativeModel({
-    model: MODEL_ID,
+    model: resolveModelId(),
     generationConfig: {
       responseMimeType: "application/json",
       responseSchema,
       temperature: 0.4,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 3072,
     },
   });
 
   const userPayload = {
     url: snapshot.url,
     context: snapshot.context ?? "",
-    page_seo_score: snapshot.pageSpeed.score,
-    audits_summary: Object.keys(snapshot.pageSpeed.audits).slice(0, 25),
+    page_seo_score: snapshot.pageSpeed.categoryScore,
+    page_seo_summary: snapshot.pageSpeed.categorySummary,
+    audits_needing_attention: Object.entries(snapshot.pageSpeed.audits)
+      .filter(([, a]) => a.outcome === "fail" || a.outcome === "error")
+      .slice(0, 20)
+      .map(([id, a]) => ({ id, outcome: a.outcome, label: a.outcomeLabel, title: a.title })),
     parsed: snapshot.parsed,
     issues: snapshot.issues,
   };
 
   const prompt = `You are an SEO and internationalization expert. Based on the following page analysis JSON, produce concise improvements.
+
 Rules:
 - primary_keywords: 3-8 high-intent phrases
 - secondary_keywords: 5-12 supporting phrases
-- meta_updates: improved title and meta description (plain text)
-- code_changes: minimal HTML snippets for index.html showing before/after for critical fixes (use empty string for before if adding new block)
+- meta_updates: improved title and meta description (plain text only)
+- recommendations: 5-10 items. The site may use any stack (React, Vue, Next.js, WordPress, etc.). Do NOT output HTML snippets, file paths, or git-style diffs.
+  For each item:
+  - topic: short heading (e.g. "Heading hierarchy", "Hreflang for locales")
+  - rationale: 1-3 sentences tied to this page's signals (parsed fields, issues, audits)
+  - action: concrete steps an engineer or content editor can take in their own framework—describe WHAT to achieve, not a specific HTML patch
+
 Output MUST strictly follow the JSON schema.`;
 
   const result = await model.generateContent(

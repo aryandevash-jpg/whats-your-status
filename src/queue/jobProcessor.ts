@@ -8,12 +8,12 @@ import { computeGeoScore } from "../services/geoScorer.js";
 import { generateRecommendations } from "../services/geminiService.js";
 import { buildNormalizedSnapshot } from "../core/normalizer.js";
 import { analyzeSnapshot } from "../core/analyzer.js";
-import { buildDiffBundle } from "../core/diffGenerator.js";
+import { buildAnalysisSuggestions } from "../core/suggestions.js";
 import { buildEditorPromptFromResult } from "../core/promptEngine.js";
 import type { AnalysisResult, AnalyzeJobPayload, CachedPipelineSnapshot } from "../types/index.js";
 import { logger } from "../utils/logger.js";
 
-const CACHE_PREFIX = "seo_geo:pipeline:v1:";
+const CACHE_PREFIX = "seo_geo:pipeline:v3:";
 const CACHE_TTL_SEC = 600;
 
 function cacheKeyForUrl(url: string): string {
@@ -29,6 +29,7 @@ async function readFullCache(url: string): Promise<CachedPipelineSnapshot | null
     const parsed = JSON.parse(raw) as CachedPipelineSnapshot;
     if (
       !parsed?.pageSpeed ||
+      typeof parsed.pageSpeed.categorySummary !== "string" ||
       !parsed?.parsed ||
       !parsed?.normalized ||
       !parsed?.geoScore ||
@@ -66,15 +67,15 @@ function buildResultFromPipeline(params: {
 }): AnalysisResult {
   const { url, context, pageSpeed, parsed, normalized, geoScore, gemini, fromCache } =
     params;
-  const diffs = buildDiffBundle(parsed, gemini);
+  const suggestions = buildAnalysisSuggestions(parsed, gemini);
   const result: AnalysisResult = {
     url,
     context,
-    seoScore: pageSpeed.score,
+    seoScore: pageSpeed.categoryScore,
     geoScore,
     normalized,
     gemini,
-    diffs,
+    suggestions,
     editorPrompt: { prompt: "" },
     meta: {
       cached: fromCache,
@@ -117,9 +118,16 @@ export async function processJob(payload: AnalyzeJobPayload): Promise<void> {
     return;
   }
 
+  const pipelineT0 = Date.now();
+  let pageSpeedMs = 0;
+  let scrapeMs = 0;
+  let geminiMs = 0;
+
   let pageSpeed: CachedPipelineSnapshot["pageSpeed"];
   try {
+    const tPs = Date.now();
     pageSpeed = await fetchPageSpeedSeo(url);
+    pageSpeedMs = Date.now() - tPs;
   } catch (e) {
     throw e;
   }
@@ -132,7 +140,8 @@ export async function processJob(payload: AnalyzeJobPayload): Promise<void> {
   } catch (e) {
     throw e;
   }
-  const scrapeLatencyMs = Date.now() - t0;
+  scrapeMs = Date.now() - t0;
+  const scrapeLatencyMs = scrapeMs;
 
   let parsed: CachedPipelineSnapshot["parsed"];
   try {
@@ -154,7 +163,9 @@ export async function processJob(payload: AnalyzeJobPayload): Promise<void> {
 
   let geminiOut: CachedPipelineSnapshot["gemini"];
   try {
+    const tGem = Date.now();
     geminiOut = await generateRecommendations(normalized);
+    geminiMs = Date.now() - tGem;
   } catch (e) {
     if (e instanceof Error && /validation|non-JSON|Missing GEMINI/i.test(e.message)) {
       throw new NonRetryablePipelineError(e.message, { cause: e });
@@ -182,5 +193,12 @@ export async function processJob(payload: AnalyzeJobPayload): Promise<void> {
     fromCache: false,
   });
   await jobStore.setJobResult(jobId, result);
-  logger.info("job_completed", { jobId, url });
+  logger.info("job_completed", {
+    jobId,
+    url,
+    pageSpeedMs,
+    scrapeMs,
+    geminiMs,
+    totalMs: Date.now() - pipelineT0,
+  });
 }

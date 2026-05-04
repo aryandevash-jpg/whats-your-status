@@ -20,10 +20,38 @@ export interface AnalyzeJobPayload {
   context?: string;
 }
 
+/** Lighthouse SEO audit row — `outcome` is the meaningful signal; category score is separate. */
+export type SeoAuditOutcome = "pass" | "fail" | "not_applicable" | "informational" | "error";
+
+export interface PageSpeedSeoAuditRow {
+  title?: string;
+  description?: string;
+  /** Lighthouse `scoreDisplayMode` (e.g. binary, notApplicable). */
+  scoreDisplayMode?: string;
+  /** Raw Lighthouse audit score 0–1 when present. */
+  lighthouseScore: number | null;
+  outcome: SeoAuditOutcome;
+  /** Short copy for tables and UI. */
+  outcomeLabel: string;
+}
+
 export interface PageSpeedSeoSummary {
-  score: number | null;
-  audits: Record<string, { title?: string; description?: string; score?: number | null }>;
-  rawCategoryScore?: number | null;
+  /** Weighted Lighthouse SEO *category* score (0–100). Not an average of per-audit rows. */
+  categoryScore: number | null;
+  /** Raw Lighthouse category score (0–1). */
+  rawCategoryScore: number | null;
+  /** One sentence explaining how to read `categoryScore` vs audits. */
+  categorySummary: string;
+  /** Counts for audits included in this SEO report (from Lighthouse SEO `auditRefs`). */
+  auditRollup: {
+    total: number;
+    passed: number;
+    failed: number;
+    notApplicable: number;
+    informational: number;
+    errors: number;
+  };
+  audits: Record<string, PageSpeedSeoAuditRow>;
 }
 
 export interface ParsedPageMeta {
@@ -52,6 +80,7 @@ export interface GeoScoreBreakdown {
   total: number;
 }
 
+/** LLM output: framework-agnostic guidance (no HTML before/after snippets). */
 export interface GeminiStructuredOutput {
   primary_keywords: string[];
   secondary_keywords: string[];
@@ -59,23 +88,21 @@ export interface GeminiStructuredOutput {
     title: string;
     description: string;
   };
-  code_changes: Array<{
-    file: string;
-    before: string;
-    after: string;
+  recommendations: Array<{
+    topic: string;
+    rationale: string;
+    action: string;
   }>;
 }
 
-export interface JsonPatchOperation {
-  op: "add" | "remove" | "replace" | "move" | "copy" | "test";
-  path: string;
-  value?: unknown;
-  from?: string;
-}
-
-export interface DiffBundle {
-  jsonPatch: JsonPatchOperation[];
-  gitStyleDiff: string;
+/** Deterministic summary for the client (no parsed-HTML diffs). */
+export interface AnalysisSuggestions {
+  meta: {
+    currentTitle: string | null;
+    currentDescription: string | null;
+    suggestedTitle: string;
+    suggestedDescription: string;
+  };
 }
 
 export interface EditorPromptBundle {
@@ -85,11 +112,12 @@ export interface EditorPromptBundle {
 export interface AnalysisResult {
   url: string;
   context?: string;
+  /** Same as `pageSpeed.categoryScore` — Lighthouse weighted SEO category (0–100). */
   seoScore: number | null;
   geoScore: GeoScoreBreakdown;
   normalized: NormalizedSnapshot;
   gemini: GeminiStructuredOutput;
-  diffs: DiffBundle;
+  suggestions: AnalysisSuggestions;
   editorPrompt: EditorPromptBundle;
   meta: {
     cached: boolean;
