@@ -1,0 +1,30 @@
+{
+  "name": "whats-your-status",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Asynchronous SEO + GEO analysis with LLM recommendations",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start:api": "node dist/api/server.js",
+    "start:worker": "node dist/queue/worker.js",
+    "dev:api": "tsx watch src/api/server.ts",
+    "dev:worker": "tsx watch src/queue/worker.ts"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "axios": "^1.7.9",
+    "bullmq": "^5.34.3",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
