@@ -1,21 +1,10 @@
-# GitHub Secrets (Repository → Settings → Secrets and variables → Actions)
-#
-# Deploy / ECS
-# - ECR_REPOSITORY    ECR repo name only (same as in ECS task image path before the colon)
-# - ECS_CLUSTER       ECS cluster name
-# - ECS_SERVICE       ECS service name
-# - AWS_REGION        Optional when unset elsewhere; overrides default below via expression
-#
-# AWS auth — IAM access keys (store as Actions secrets)
-# - AWS_ACCESS_KEY_ID
-# - AWS_SECRET_ACCESS_KEY
-# - AWS_SESSION_TOKEN      Optional for temporary STS keys; omit if using long-lived user keys
-
-name: Test and deploy
+name: AWS ECS Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
   workflow_dispatch:
 
 concurrency:
@@ -26,17 +15,21 @@ permissions:
   contents: read
 
 env:
-  # Default region when secret AWS_REGION is not defined (empty interpolates falsy → fallback).
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  TF_VAR_aws_region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  TF_VAR_gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+  TF_VAR_pagespeed_api_key: ${{ secrets.PAGESPEED_API_KEY }}
 
 jobs:
-  test:
-    name: Tests
+  tests:
+    name: Phase 1 - Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
@@ -44,78 +37,137 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Unit and integration tests (JUnit XML)
+      - name: Run backend unit + integration tests (JUnit)
         run: npm run test:ci
 
-      - name: Upload test report
-        if: success() || failure()
+      - name: Upload test reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: junit-xml
-          path: reports/junit.xml
+          name: test-reports
+          path: reports/
 
-  deploy:
-    name: Build and deploy
+  terraform:
+    name: Phase 2 - Terraform
+    needs: tests
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: test
-    if: ${{ github.ref == 'refs/heads/main' }}
+    outputs:
+      ecr_repository_url: ${{ steps.tf-output.outputs.ecr_repository_url }}
+      ecs_cluster_name: ${{ steps.tf-output.outputs.ecs_cluster_name }}
+      ecs_service_name: ${{ steps.tf-output.outputs.ecs_service_name }}
+      load_balancer_dns: ${{ steps.tf-output.outputs.load_balancer_dns }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Terraform apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Capture Terraform outputs
+        id: tf-output
+        working-directory: terraform
+        run: |
+          echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> "$GITHUB_OUTPUT"
+          echo "ecs_cluster_name=$(terraform output -raw ecs_cluster_name)" >> "$GITHUB_OUTPUT"
+          echo "ecs_service_name=$(terraform output -raw ecs_service_name)" >> "$GITHUB_OUTPUT"
+          echo "load_balancer_dns=$(terraform output -raw load_balancer_dns)" >> "$GITHUB_OUTPUT"
+
+  deploy-ecs:
+    name: Phase 3 - Build, Push, Deploy ECS
+    needs: terraform
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
     env:
-      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-      ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
-      ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
+      ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.ecr_repository_url }}
+      ECS_CLUSTER_NAME: ${{ needs.terraform.outputs.ecs_cluster_name }}
+      ECS_SERVICE_NAME: ${{ needs.terraform.outputs.ecs_service_name }}
+      ALB_DNS_NAME: ${{ needs.terraform.outputs.load_balancer_dns }}
       IMAGE_TAG: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: ${{ env.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Log in to Amazon ECR
-        id: ecr
+      - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push image
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
+      - name: Build and push Docker image
         run: |
-          docker build -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" -t "$REGISTRY/$ECR_REPOSITORY:latest" .
-          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker push "$REGISTRY/$ECR_REPOSITORY:latest"
+          docker build -t "$ECR_REPOSITORY_URL:$IMAGE_TAG" -t "$ECR_REPOSITORY_URL:latest" .
+          docker push "$ECR_REPOSITORY_URL:$IMAGE_TAG"
+          docker push "$ECR_REPOSITORY_URL:latest"
 
-      - name: Force new ECS deployment
+      - name: Register new task definition revision
+        id: taskdef
+        run: |
+          TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER_NAME" \
+            --services "$ECS_SERVICE_NAME" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_DEF_ARN" \
+            --query 'taskDefinition' > task-def.json
+
+          NEW_IMAGE="$ECR_REPOSITORY_URL:$IMAGE_TAG"
+          jq --arg IMAGE "$NEW_IMAGE" '
+            .containerDefinitions |= map(
+              if .name == "api" or .name == "worker" then .image = $IMAGE else . end
+            )
+            | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)
+          ' task-def.json > task-def-updated.json
+
+          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://task-def-updated.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "task_definition_arn=$NEW_TASK_DEF_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Update ECS service to new revision
         run: |
           aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --force-new-deployment \
-            --region "$AWS_REGION" \
+            --cluster "$ECS_CLUSTER_NAME" \
+            --service "$ECS_SERVICE_NAME" \
+            --task-definition "${{ steps.taskdef.outputs.task_definition_arn }}" \
             --no-cli-pager
 
-  verify:
-    name: Verify rollout
-    runs-on: ubuntu-latest
-    needs: deploy
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+      - name: Verify ECS service rollout
+        run: aws ecs wait services-stable --cluster "$ECS_CLUSTER_NAME" --services "$ECS_SERVICE_NAME"
 
-      - name: Wait for ECS service stability
-        env:
-          ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
-          ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
-        run: |
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --region "$AWS_REGION" \
-            --no-cli-pager
+      - name: Verify service endpoint
+        run: curl --fail --retry 12 --retry-delay 10 "http://$ALB_DNS_NAME/health"
