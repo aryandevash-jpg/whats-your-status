@@ -1,4 +1,4 @@
-const baseUrl = (import.meta.env.VITE_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
+const baseUrl = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 
 async function parseJson<T>(res: Response): Promise<T> {
   const text = await res.text();

@@ -6,8 +6,10 @@
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json ./
+COPY web/package.json web/package-lock.json ./web/
 COPY src ./src
-RUN npm ci && npm run build
+COPY web ./web
+RUN npm ci && npm run build && npm ci --prefix web && npm run build --prefix web
 
 FROM node:22-bookworm-slim
 RUN groupadd --system --gid 1001 appgroup \
@@ -22,6 +24,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/web/dist ./web-dist
 RUN chown -R appuser:appgroup /app
 USER appuser
 EXPOSE 3000
