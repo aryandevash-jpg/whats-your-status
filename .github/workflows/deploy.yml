@@ -58,11 +58,7 @@ jobs:
     name: Build and deploy
     runs-on: ubuntu-latest
     needs: test
-    if: >-
-      ${{ github.ref == 'refs/heads/main' &&
-          secrets.ECR_REPOSITORY != '' &&
-          secrets.ECS_CLUSTER != '' &&
-          secrets.ECS_SERVICE != '' }}
+    if: ${{ github.ref == 'refs/heads/main' }}
     env:
       ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
       ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
