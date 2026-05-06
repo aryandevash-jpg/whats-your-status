@@ -10,4 +10,8 @@ coverage/
 terraform/.terraform/
 *.tfstate
 *.tfstate.*
+tfplan
+tfplan.*
+*.tfplan
+*.tfplan.*
 crash.log
