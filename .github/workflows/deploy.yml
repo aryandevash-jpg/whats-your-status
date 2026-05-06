@@ -106,6 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.ecr_repository_url }}
+      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
       ECS_CLUSTER_NAME: ${{ needs.terraform.outputs.ecs_cluster_name }}
       ECS_SERVICE_NAME: ${{ needs.terraform.outputs.ecs_service_name }}
       ALB_DNS_NAME: ${{ needs.terraform.outputs.load_balancer_dns }}
@@ -124,6 +125,18 @@ jobs:
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve ECR repository URL
+        run: |
+          if [ -z "$ECR_REPOSITORY_URL" ] && [ -n "$ECR_REPOSITORY" ]; then
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            ECR_REPOSITORY_URL="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+          fi
+          if [ -z "$ECR_REPOSITORY_URL" ]; then
+            echo "ECR_REPOSITORY_URL is empty. Check terraform output ecr_repository_url or set ECR_REPOSITORY secret."
+            exit 1
+          fi
+          echo "ECR_REPOSITORY_URL=$ECR_REPOSITORY_URL" >> "$GITHUB_ENV"
 
       - name: Build and push Docker image
         run: |
