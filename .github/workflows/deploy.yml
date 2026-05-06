@@ -212,13 +212,13 @@ jobs:
             --services "$ECS_SERVICE_NAME" \
             --query 'services[0].loadBalancers[0].targetGroupArn' \
             --output text)
-          for i in {1..24}; do
-            STATE=$(aws elbv2 describe-target-health \
+          for i in {1..36}; do
+            STATES=$(aws elbv2 describe-target-health \
               --target-group-arn "$TG_ARN" \
-              --query 'TargetHealthDescriptions[0].TargetHealth.State' \
+              --query 'TargetHealthDescriptions[].TargetHealth.State' \
               --output text)
-            echo "target state: $STATE"
-            if [ "$STATE" = "healthy" ]; then
+            echo "target states: $STATES"
+            if echo "$STATES" | rg -q "\\bhealthy\\b"; then
               exit 0
             fi
             sleep 5
