@@ -182,5 +182,49 @@ jobs:
       - name: Verify ECS service rollout
         run: aws ecs wait services-stable --cluster "$ECS_CLUSTER_NAME" --services "$ECS_SERVICE_NAME"
 
+      - name: Resolve ALB DNS (fallback)
+        run: |
+          if [ -z "$ALB_DNS_NAME" ]; then
+            TG_ARN=$(aws ecs describe-services \
+              --cluster "$ECS_CLUSTER_NAME" \
+              --services "$ECS_SERVICE_NAME" \
+              --query 'services[0].loadBalancers[0].targetGroupArn' \
+              --output text)
+            LB_ARN=$(aws elbv2 describe-target-groups \
+              --target-group-arns "$TG_ARN" \
+              --query 'TargetGroups[0].LoadBalancerArns[0]' \
+              --output text)
+            ALB_DNS_NAME=$(aws elbv2 describe-load-balancers \
+              --load-balancer-arns "$LB_ARN" \
+              --query 'LoadBalancers[0].DNSName' \
+              --output text)
+          fi
+          if [ -z "$ALB_DNS_NAME" ] || [ "$ALB_DNS_NAME" = "None" ]; then
+            echo "Could not resolve ALB DNS name."
+            exit 1
+          fi
+          echo "ALB_DNS_NAME=$ALB_DNS_NAME" >> "$GITHUB_ENV"
+
+      - name: Wait for ALB target health
+        run: |
+          TG_ARN=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER_NAME" \
+            --services "$ECS_SERVICE_NAME" \
+            --query 'services[0].loadBalancers[0].targetGroupArn' \
+            --output text)
+          for i in {1..24}; do
+            STATE=$(aws elbv2 describe-target-health \
+              --target-group-arn "$TG_ARN" \
+              --query 'TargetHealthDescriptions[0].TargetHealth.State' \
+              --output text)
+            echo "target state: $STATE"
+            if [ "$STATE" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Targets did not become healthy in time."
+          exit 1
+
       - name: Verify service endpoint
-        run: curl --fail --retry 12 --retry-delay 10 "http://$ALB_DNS_NAME/health"
+        run: curl --fail --retry 12 --retry-delay 10 --retry-all-errors "http://$ALB_DNS_NAME/health"
