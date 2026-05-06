@@ -21,6 +21,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     await jobStore.createJob(jobId);
     const skipPipelineCache = body.skipPipelineCache === true;
     await enqueueAnalysis({
+      kind: "single",
       jobId,
       url,
       context: typeof body.context === "string" ? body.context : undefined,

@@ -5,6 +5,7 @@ import fastifyStatic from "@fastify/static";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import analyzeRoutes from "./routes/analyze.js";
+import sitemapAnalyzeRoutes from "./routes/sitemapAnalyze.js";
 import statusRoutes from "./routes/status.js";
 import resultRoutes from "./routes/result.js";
 import { logger } from "../utils/logger.js";
@@ -28,6 +29,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/health", async (_request, reply) => reply.send({ status: "ok" }));
 
   await app.register(analyzeRoutes);
+  await app.register(sitemapAnalyzeRoutes);
   await app.register(statusRoutes);
   await app.register(resultRoutes);
 
@@ -49,6 +51,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       // Keep API and health routes distinct; everything else serves SPA entrypoint.
       if (
         request.url.startsWith("/analyze") ||
+        request.url.startsWith("/sitemap-analyze") ||
         request.url.startsWith("/status/") ||
         request.url.startsWith("/result/") ||
         request.url === "/health"

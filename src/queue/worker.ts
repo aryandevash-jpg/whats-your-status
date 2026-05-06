@@ -11,7 +11,10 @@ import { envClampedInt } from "../utils/httpTimeouts.js";
 
 const connection = createBullConnection();
 
-/** Limits parallel PageSpeed/Gemini work per process (each job hits PageSpeed). Default 1 reduces connection churn. */
+/**
+ * Parallel BullMQ jobs per worker process. Each single-URL job hits PageSpeed + Gemini; sitemap jobs run many URLs
+ * inside one BullMQ job (see SITEMAP_PIPELINE_CONCURRENCY). Default 1 reduces connection churn.
+ */
 const WORKER_CONCURRENCY = envClampedInt("WORKER_CONCURRENCY", 1, 1, 20);
 
 /** BullMQ lock must cover worst-case PageSpeed (several long attempts) + scrape + Gemini. */

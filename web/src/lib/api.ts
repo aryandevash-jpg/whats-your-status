@@ -23,6 +23,24 @@ export async function postAnalyze(body: {
   return parseJson(res);
 }
 
+export async function postSitemapAnalyze(body: {
+  sitemapUrl: string;
+  context?: string;
+  maxPages?: number;
+  skipPipelineCache?: boolean;
+}): Promise<{ jobId: string; status: string }> {
+  const res = await fetch(`${baseUrl}/sitemap-analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || `HTTP ${res.status}`);
+  }
+  return parseJson(res);
+}
+
 export type JobStatus = "queued" | "processing" | "completed" | "failed";
 
 export async function getStatus(jobId: string): Promise<{
@@ -99,10 +117,36 @@ export type AnalysisResult = {
   meta: { cached: boolean; completedAt: string };
 };
 
+export type SitemapPageEntry =
+  | { url: string; ok: true; result: AnalysisResult }
+  | { url: string; ok: false; error: string };
+
+export type SitemapCrawlReport = {
+  kind: "sitemap_report";
+  sitemapUrl: string;
+  context?: string;
+  urlsFromSitemap: number;
+  crawledCount: number;
+  truncated: boolean;
+  sitemapDocumentsFetched: number;
+  summary: {
+    missingTitle: number;
+    missingMetaDescription: number;
+    missingH1: number;
+    pagesWithIssues: number;
+    pipelineFailures: number;
+    averageSeoScore: number | null;
+  };
+  pages: SitemapPageEntry[];
+  meta: { completedAt: string };
+};
+
+export type AnalysisOutcome = AnalysisResult | SitemapCrawlReport;
+
 export async function getResult(jobId: string): Promise<{
   jobId: string;
   status: "completed";
-  result: AnalysisResult;
+  result: AnalysisOutcome;
 }> {
   const res = await fetch(`${baseUrl}/result/${encodeURIComponent(jobId)}`);
   if (!res.ok) throw new Error(await res.text());

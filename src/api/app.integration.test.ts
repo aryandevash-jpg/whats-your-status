@@ -76,6 +76,12 @@ describe("API (integration)", () => {
       expect(res.body.jobId).toBeDefined();
       expect(res.body.status).toBe("queued");
       expect(mockedEnqueue).toHaveBeenCalledTimes(1);
+      expect(mockedEnqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "single",
+          url: "https://example.com",
+        })
+      );
       expect(mockedCreateJob).toHaveBeenCalledWith(res.body.jobId);
     });
 
@@ -85,6 +91,70 @@ describe("API (integration)", () => {
 
       const bad = await request(server.server).post("/analyze").send({
         url: "not-a-valid-url",
+      });
+      expect(bad.status).toBe(400);
+    });
+  });
+
+  describe("POST /sitemap-analyze", () => {
+    it("returns 202 and enqueues sitemap job when sitemapUrl is valid", async () => {
+      mockedCreateJob.mockImplementation(async (jobId: string) => ({
+        jobId,
+        status: "queued",
+        result: null,
+        error: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }));
+
+      const res = await request(server.server).post("/sitemap-analyze").send({
+        sitemapUrl: "https://example.com/sitemap.xml",
+        maxPages: 50,
+      });
+
+      expect(res.status).toBe(202);
+      expect(res.body.jobId).toBeDefined();
+      expect(res.body.status).toBe("queued");
+      expect(mockedEnqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "sitemap",
+          sitemapUrl: "https://example.com/sitemap.xml",
+          maxPages: 50,
+          skipPipelineCache: false,
+        })
+      );
+    });
+
+    it("passes skipPipelineCache when requested", async () => {
+      mockedCreateJob.mockImplementation(async (jobId: string) => ({
+        jobId,
+        status: "queued",
+        result: null,
+        error: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }));
+
+      const res = await request(server.server).post("/sitemap-analyze").send({
+        sitemapUrl: "https://example.com/sitemap.xml",
+        skipPipelineCache: true,
+      });
+
+      expect(res.status).toBe(202);
+      expect(mockedEnqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "sitemap",
+          skipPipelineCache: true,
+        })
+      );
+    });
+
+    it("returns 400 when sitemapUrl is missing or invalid", async () => {
+      const empty = await request(server.server).post("/sitemap-analyze").send({});
+      expect(empty.status).toBe(400);
+
+      const bad = await request(server.server).post("/sitemap-analyze").send({
+        sitemapUrl: "not-a-url",
       });
       expect(bad.status).toBe(400);
     });

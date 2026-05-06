@@ -1,5 +1,5 @@
 import { getRedis } from "./redisClient.js";
-import type { AnalysisResult, JobRecord, JobStatus } from "../types/index.js";
+import type { JobRecord, JobResultPayload, JobStatus } from "../types/index.js";
 
 const JOB_PREFIX = "job:";
 
@@ -42,7 +42,7 @@ export async function updateJobStatus(
   return updated;
 }
 
-export async function setJobResult(jobId: string, result: AnalysisResult): Promise<JobRecord | null> {
+export async function setJobResult(jobId: string, result: JobResultPayload): Promise<JobRecord | null> {
   return updateJobStatus(jobId, "completed", { result, error: null });
 }
 

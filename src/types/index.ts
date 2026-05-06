@@ -3,7 +3,7 @@ export type JobStatus = "queued" | "processing" | "completed" | "failed";
 export interface JobRecord {
   jobId: string;
   status: JobStatus;
-  result: AnalysisResult | null;
+  result: JobResultPayload | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;
@@ -16,12 +16,32 @@ export interface AnalyzeRequestBody {
   skipPipelineCache?: boolean;
 }
 
-export interface AnalyzeJobPayload {
-  jobId: string;
-  url: string;
+/** Crawl every `<loc>` under `<url>` in the sitemap tree (follows nested sitemap indexes up to server limits). */
+export interface SitemapAnalyzeRequestBody {
+  sitemapUrl: string;
   context?: string;
+  /** Optional cap; server clamps to `SITEMAP_MAX_PAGES` (default 200). */
+  maxPages?: number;
+  /** When true, bypass Redis pipeline snapshot for each URL (PageSpeed, scrape, Gemini re-run). */
   skipPipelineCache?: boolean;
 }
+
+export type AnalyzeJobPayload =
+  | {
+      kind: "single";
+      jobId: string;
+      url: string;
+      context?: string;
+      skipPipelineCache?: boolean;
+    }
+  | {
+      kind: "sitemap";
+      jobId: string;
+      sitemapUrl: string;
+      context?: string;
+      maxPages?: number;
+      skipPipelineCache?: boolean;
+    };
 
 /** Lighthouse SEO audit row — `outcome` is the meaningful signal; category score is separate. */
 export type SeoAuditOutcome = "pass" | "fail" | "not_applicable" | "informational" | "error";
@@ -128,6 +148,39 @@ export interface AnalysisResult {
     completedAt: string;
   };
 }
+
+export type SitemapPageEntry =
+  | { url: string; ok: true; result: AnalysisResult }
+  | { url: string; ok: false; error: string };
+
+/** Multi-page report: same pipeline as single-page analyze (PageSpeed, scrape, parse, Gemini) per URL. */
+export interface SitemapCrawlReport {
+  kind: "sitemap_report";
+  sitemapUrl: string;
+  context?: string;
+  /** Distinct page URLs collected from the sitemap walk (after dedupe; may be capped). */
+  urlsFromSitemap: number;
+  crawledCount: number;
+  truncated: boolean;
+  sitemapDocumentsFetched: number;
+  summary: {
+    missingTitle: number;
+    missingMetaDescription: number;
+    missingH1: number;
+    /** Pages where pipeline failed or on-page `parsed.missing` is non-empty. */
+    pagesWithIssues: number;
+    /** PageSpeed, scrape, parse, or Gemini failed for this URL. */
+    pipelineFailures: number;
+    /** Mean Lighthouse SEO category score over successful pages with a score (0–100). */
+    averageSeoScore: number | null;
+  };
+  pages: SitemapPageEntry[];
+  meta: {
+    completedAt: string;
+  };
+}
+
+export type JobResultPayload = AnalysisResult | SitemapCrawlReport;
 
 export interface CachedPipelineSnapshot {
   pageSpeed: PageSpeedSeoSummary;
