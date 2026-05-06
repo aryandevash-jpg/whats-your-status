@@ -218,7 +218,7 @@ jobs:
               --query 'TargetHealthDescriptions[].TargetHealth.State' \
               --output text)
             echo "target states: $STATES"
-            if echo "$STATES" | rg -q "\\bhealthy\\b"; then
+            if echo "$STATES" | grep -Eq '(^|[[:space:]])healthy($|[[:space:]])'; then
               exit 0
             fi
             sleep 5
