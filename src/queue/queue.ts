@@ -9,11 +9,8 @@ const connection = createBullConnection();
 export const analysisQueue = new Queue<AnalyzeJobPayload>(QUEUE_NAME, {
   connection,
   defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: "exponential",
-      delay: 5000,
-    },
+    // PageSpeed uses its own time-budgeted HTTP retries; avoid stacking BullMQ attempts (extra load, duplicate ECONNRESET).
+    attempts: 1,
     removeOnComplete: 1000,
     removeOnFail: 5000,
   },

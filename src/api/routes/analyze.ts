@@ -3,16 +3,8 @@ import { randomUUID } from "node:crypto";
 import { enqueueAnalysis } from "../../queue/queue.js";
 import * as jobStore from "../../storage/jobStore.js";
 import type { AnalyzeRequestBody } from "../../types/index.js";
+import { isValidHttpUrl } from "../../utils/httpUrl.js";
 import { logger } from "../../utils/logger.js";
-
-function isValidHttpUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
 
 const plugin: FastifyPluginAsync = async (app) => {
   app.post<{ Body: AnalyzeRequestBody }>("/analyze", async (request, reply) => {
@@ -27,13 +19,15 @@ const plugin: FastifyPluginAsync = async (app) => {
 
     const jobId = randomUUID();
     await jobStore.createJob(jobId);
+    const skipPipelineCache = body.skipPipelineCache === true;
     await enqueueAnalysis({
       jobId,
       url,
       context: typeof body.context === "string" ? body.context : undefined,
+      skipPipelineCache,
     });
 
-    logger.info("analyze_enqueued", { jobId, url });
+    logger.info("analyze_enqueued", { jobId, url, skipPipelineCache });
 
     return reply.status(202).send({
       jobId,

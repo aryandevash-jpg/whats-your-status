@@ -68,6 +68,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [copied, setCopied] = useState(false);
+  const [skipPipelineCache, setSkipPipelineCache] = useState(false);
 
   const reset = useCallback(() => {
     setPhase("idle");
@@ -88,13 +89,14 @@ export default function App() {
       const { jobId: id } = await postAnalyze({
         url: url.trim(),
         context: context.trim() || undefined,
+        skipPipelineCache: skipPipelineCache || undefined,
       });
       setJobId(id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
       setPhase("error");
     }
-  }, [url, context]);
+  }, [url, context, skipPipelineCache]);
 
   useEffect(() => {
     if (!jobId || phase !== "running") return;
@@ -206,6 +208,25 @@ export default function App() {
                     rows={3}
                   />
                 </div>
+                <div className="flex items-start gap-3 sm:col-span-2">
+                  <input
+                    id="skip-pipeline-cache"
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 rounded border border-input bg-background accent-primary"
+                    checked={skipPipelineCache}
+                    onChange={(e) => setSkipPipelineCache(e.target.checked)}
+                    disabled={phase === "running"}
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="skip-pipeline-cache" className="cursor-pointer text-sm font-medium leading-none">
+                      Skip server snapshot cache
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Re-run PageSpeed, live scrape, and Gemini instead of reusing the Redis snapshot for this URL (~10
+                      min). Use after changing backend prompts, or when you need a fresh model response.
+                    </p>
+                  </div>
+                </div>
               </div>
               {error && phase === "error" ? (
                 <Alert variant="destructive">
@@ -265,7 +286,11 @@ export default function App() {
                 <p className="text-sm text-muted-foreground">{result.url}</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {result.meta.cached ? <Badge variant="warning">Cached pipeline</Badge> : null}
+                {result.meta.cached ? (
+                  <Badge variant="warning" title="PageSpeed + scrape + Gemini came from Redis for this URL">
+                    Cached pipeline
+                  </Badge>
+                ) : null}
                 <Badge variant="outline" className="font-mono text-xs">
                   {new Date(result.meta.completedAt).toLocaleString()}
                 </Badge>

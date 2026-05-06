@@ -21,7 +21,10 @@ const TIMEOUT_RETRY_MULTIPLIER = envClampedFloat("PAGESPEED_TIMEOUT_RETRY_MULTIP
 const pagespeedHttpAgent = new http.Agent({ keepAlive: false });
 const pagespeedHttpsAgent = new https.Agent({ keepAlive: false });
 
-const MAX_HTTP_ATTEMPTS = envClampedInt("PAGESPEED_HTTP_MAX_ATTEMPTS", 5, 1, 10);
+/** Keep retrying transient PageSpeed failures until this wall-clock budget is used (avoids a low fixed attempt cap). */
+const RETRY_BUDGET_MS = envClampedInt("PAGESPEED_HTTP_RETRY_BUDGET_MS", 900_000, 60_000, 1_800_000);
+/** Hard cap so a pathological fast-fail loop cannot spin forever. */
+const RETRY_SAFETY_MAX_TRIES = envClampedInt("PAGESPEED_HTTP_MAX_TRIES", 40, 1, 200);
 const RETRY_BASE_MS = envClampedInt("PAGESPEED_HTTP_RETRY_BASE_MS", 1000, 100, 60_000);
 
 function sleep(ms: number): Promise<void> {
@@ -34,10 +37,20 @@ function timeoutMsForAttempt(attempt: number): number {
 }
 
 /** Exponential backoff with jitter so parallel workers do not realign on Google. */
-function backoffDelayMs(attempt: number): number {
-  const exp = RETRY_BASE_MS * 2 ** attempt;
+function backoffDelayMs(attemptIndex: number): number {
+  const exp = RETRY_BASE_MS * 2 ** attemptIndex;
   const jitter = 0.75 + Math.random() * 0.5;
   return Math.round(exp * jitter);
+}
+
+/** Dropped connections often recover quickly with a new socket; long backoff wastes the retry budget. */
+function delayAfterTransientNetworkError(attemptIndex: number, err: unknown): number {
+  if (!axios.isAxiosError(err)) return backoffDelayMs(attemptIndex);
+  const code = err.code;
+  if (code === "ECONNRESET" || code === "ECONNABORTED" || code === "EPIPE") {
+    return Math.round(400 + Math.random() * 400);
+  }
+  return backoffDelayMs(attemptIndex);
 }
 
 /** Axios threw or we treat HTTP 429 / 5xx as retryable at the transport layer. */
@@ -257,15 +270,19 @@ export async function fetchPageSpeedSeo(url: string): Promise<PageSpeedSeoSummar
   }
 
   const clientStartedAt = Date.now();
+  const budgetEnd = clientStartedAt + RETRY_BUDGET_MS;
   let lastFailure: unknown;
+  let tries = 0;
 
-  for (let attempt = 0; attempt < MAX_HTTP_ATTEMPTS; attempt++) {
-    const timeoutMs = timeoutMsForAttempt(attempt);
+  while (Date.now() < budgetEnd && tries < RETRY_SAFETY_MAX_TRIES) {
+    const attemptIndex = tries;
+    tries += 1;
+    const timeoutMs = timeoutMsForAttempt(attemptIndex);
     logger.debug("pagespeed_attempt", {
       url,
-      attempt: attempt + 1,
-      maxAttempts: MAX_HTTP_ATTEMPTS,
+      try: tries,
       timeoutMs,
+      retryBudgetRemainingMs: Math.max(0, budgetEnd - Date.now()),
     });
 
     try {
@@ -286,7 +303,7 @@ export async function fetchPageSpeedSeo(url: string): Promise<PageSpeedSeoSummar
         logger.info("pagespeed_client_done", {
           url,
           clientDurationMs: Date.now() - clientStartedAt,
-          httpAttempts: attempt + 1,
+          httpTries: tries,
         });
         return summary;
       }
@@ -295,20 +312,19 @@ export async function fetchPageSpeedSeo(url: string): Promise<PageSpeedSeoSummar
         lastFailure = Object.assign(new Error(`PageSpeed API error: HTTP ${response.status}`), {
           status: response.status,
         });
-        if (attempt < MAX_HTTP_ATTEMPTS - 1) {
-          const wait = backoffDelayMs(attempt);
-          const nextTimeout = timeoutMsForAttempt(attempt + 1);
-          logger.warn("pagespeed_retry", {
-            url,
-            reason: "http_status",
-            status: response.status,
-            attempt: attempt + 1,
-            maxAttempts: MAX_HTTP_ATTEMPTS,
-            nextDelayMs: wait,
-            nextTimeoutMs: nextTimeout,
-          });
-          await sleep(wait);
-        }
+        const wait = backoffDelayMs(attemptIndex);
+        if (Date.now() + wait >= budgetEnd) break;
+        const nextTimeout = timeoutMsForAttempt(attemptIndex + 1);
+        logger.warn("pagespeed_retry", {
+          url,
+          reason: "http_status",
+          status: response.status,
+          try: tries,
+          nextDelayMs: wait,
+          nextTimeoutMs: nextTimeout,
+          retryBudgetRemainingMs: Math.max(0, budgetEnd - Date.now() - wait),
+        });
+        await sleep(wait);
         continue;
       }
 
@@ -320,24 +336,23 @@ export async function fetchPageSpeedSeo(url: string): Promise<PageSpeedSeoSummar
         throw e;
       }
       lastFailure = e;
-      if (attempt < MAX_HTTP_ATTEMPTS - 1) {
-        const wait = backoffDelayMs(attempt);
-        const nextTimeout = timeoutMsForAttempt(attempt + 1);
-        const code = axios.isAxiosError(e) ? e.code : undefined;
-        const status = axios.isAxiosError(e) ? e.response?.status : undefined;
-        logger.warn("pagespeed_retry", {
-          url,
-          reason: "network",
-          code,
-          status,
-          attempt: attempt + 1,
-          maxAttempts: MAX_HTTP_ATTEMPTS,
-          usedTimeoutMs: timeoutMs,
-          nextDelayMs: wait,
-          nextTimeoutMs: nextTimeout,
-        });
-        await sleep(wait);
-      }
+      const wait = delayAfterTransientNetworkError(attemptIndex, e);
+      if (Date.now() + wait >= budgetEnd) break;
+      const nextTimeout = timeoutMsForAttempt(attemptIndex + 1);
+      const code = axios.isAxiosError(e) ? e.code : undefined;
+      const status = axios.isAxiosError(e) ? e.response?.status : undefined;
+      logger.warn("pagespeed_retry", {
+        url,
+        reason: "network",
+        code,
+        status,
+        try: tries,
+        usedTimeoutMs: timeoutMs,
+        nextDelayMs: wait,
+        nextTimeoutMs: nextTimeout,
+        retryBudgetRemainingMs: Math.max(0, budgetEnd - Date.now() - wait),
+      });
+      await sleep(wait);
     }
   }
 

@@ -12,12 +12,15 @@ export interface JobRecord {
 export interface AnalyzeRequestBody {
   url: string;
   context?: string;
+  /** When true, bypass Redis pipeline snapshot for this URL and re-run PageSpeed, scrape, and Gemini. */
+  skipPipelineCache?: boolean;
 }
 
 export interface AnalyzeJobPayload {
   jobId: string;
   url: string;
   context?: string;
+  skipPipelineCache?: boolean;
 }
 
 /** Lighthouse SEO audit row — `outcome` is the meaningful signal; category score is separate. */
@@ -120,6 +123,7 @@ export interface AnalysisResult {
   suggestions: AnalysisSuggestions;
   editorPrompt: EditorPromptBundle;
   meta: {
+    /** True when PageSpeed + scrape + Gemini snapshot was reused from Redis (~10 min TTL), not regenerated. */
     cached: boolean;
     completedAt: string;
   };

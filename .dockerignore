@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.github
+terraform
+web/node_modules
+web/dist
+*.log
+.env
+.env.*
+!.env.example
+reports
+coverage
+.DS_Store
+*.md

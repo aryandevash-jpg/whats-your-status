@@ -6,7 +6,11 @@ async function parseJson<T>(res: Response): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-export async function postAnalyze(body: { url: string; context?: string }): Promise<{ jobId: string; status: string }> {
+export async function postAnalyze(body: {
+  url: string;
+  context?: string;
+  skipPipelineCache?: boolean;
+}): Promise<{ jobId: string; status: string }> {
   const res = await fetch(`${baseUrl}/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

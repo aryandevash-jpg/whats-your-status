@@ -8,6 +8,8 @@
   },
   "scripts": {
     "build": "tsc",
+    "test": "jest",
+    "test:ci": "JEST_JUNIT_OUTPUT_DIR=reports JEST_JUNIT_OUTPUT_NAME=junit.xml jest --ci --reporters=default --reporters=jest-junit",
     "start:api": "node dist/api/server.js",
     "start:worker": "node dist/queue/worker.js",
     "dev:api": "tsx watch src/api/server.ts",
@@ -26,7 +28,14 @@
     "ioredis": "^5.4.2"
   },
   "devDependencies": {
+    "@jest/globals": "^29.7.0",
+    "@types/jest": "^29.5.14",
     "@types/node": "^22.10.2",
+    "@types/supertest": "^6.0.2",
+    "jest": "^29.7.0",
+    "jest-junit": "^16.0.0",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.2.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

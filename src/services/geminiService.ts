@@ -3,7 +3,7 @@ import type { GeminiStructuredOutput, NormalizedSnapshot } from "../types/index.
 import { httpTimeoutMs } from "../utils/httpTimeouts.js";
 import { logger } from "../utils/logger.js";
 
-const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
+const DEFAULT_MODEL_ID = "gemini-2.5-flash";
 
 function resolveModelId(): string {
   const id = process.env.GEMINI_MODEL?.trim();

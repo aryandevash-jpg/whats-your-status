@@ -59,7 +59,7 @@ const worker = new Worker<AnalyzeJobPayload>(
 
 worker.on("failed", async (job, err) => {
   if (!job?.data?.jobId) return;
-  const max = job.opts.attempts ?? 3;
+  const max = job.opts.attempts ?? 1;
   if (job.attemptsMade >= max) {
     const existing = await jobStore.getJob(job.data.jobId);
     if (existing?.status !== "failed" && existing?.status !== "completed") {

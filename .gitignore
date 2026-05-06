@@ -4,3 +4,10 @@ web/dist/
 .env
 *.log
 .DS_Store
+reports/
+coverage/
+.terraform/
+terraform/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log

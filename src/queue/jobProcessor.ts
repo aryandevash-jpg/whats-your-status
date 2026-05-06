@@ -91,7 +91,7 @@ export async function processJob(payload: AnalyzeJobPayload): Promise<void> {
 
   await jobStore.updateJobStatus(jobId, "processing");
 
-  const fullCached = await readFullCache(url);
+  const fullCached = payload.skipPipelineCache ? null : await readFullCache(url);
   if (fullCached) {
     const result = buildResultFromPipeline({
       url,
