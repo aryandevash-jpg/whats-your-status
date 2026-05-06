@@ -16,6 +16,9 @@ permissions:
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  TF_VAR_aws_region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  TF_VAR_gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+  TF_VAR_pagespeed_api_key: ${{ secrets.PAGESPEED_API_KEY }}
 
 jobs:
   tests:
@@ -44,16 +47,68 @@ jobs:
           name: test-reports
           path: reports/
 
-  deploy-ecs:
-    name: Phase 3 - Build, Push, Deploy ECS
+  terraform:
+    name: Phase 2 - Terraform
     needs: tests
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    outputs:
+      ecr_repository_url: ${{ steps.tf-output.outputs.ecr_repository_url }}
+      ecs_cluster_name: ${{ steps.tf-output.outputs.ecs_cluster_name }}
+      ecs_service_name: ${{ steps.tf-output.outputs.ecs_service_name }}
+      load_balancer_dns: ${{ steps.tf-output.outputs.load_balancer_dns }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init -input=false -reconfigure
+
+      - name: Terraform validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Terraform apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Capture Terraform outputs
+        id: tf-output
+        working-directory: terraform
+        run: |
+          echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> "$GITHUB_OUTPUT"
+          echo "ecs_cluster_name=$(terraform output -raw ecs_cluster_name)" >> "$GITHUB_OUTPUT"
+          echo "ecs_service_name=$(terraform output -raw ecs_service_name)" >> "$GITHUB_OUTPUT"
+          echo "load_balancer_dns=$(terraform output -raw load_balancer_dns)" >> "$GITHUB_OUTPUT"
+
+  deploy-ecs:
+    name: Phase 3 - Build, Push, Deploy ECS
+    needs: terraform
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
     env:
-      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-      ECS_CLUSTER_NAME: ${{ secrets.ECS_CLUSTER }}
-      ECS_SERVICE_NAME: ${{ secrets.ECS_SERVICE }}
-      ALB_DNS_NAME: ${{ secrets.ALB_DNS_NAME }}
+      ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.ecr_repository_url }}
+      ECS_CLUSTER_NAME: ${{ needs.terraform.outputs.ecs_cluster_name }}
+      ECS_SERVICE_NAME: ${{ needs.terraform.outputs.ecs_service_name }}
+      ALB_DNS_NAME: ${{ needs.terraform.outputs.load_balancer_dns }}
       IMAGE_TAG: ${{ github.sha }}
     steps:
       - name: Checkout
@@ -70,14 +125,8 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Resolve AWS account ID
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          echo "ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"
-
       - name: Build and push Docker image
         run: |
-          ECR_REPOSITORY_URL="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
           docker build -t "$ECR_REPOSITORY_URL:$IMAGE_TAG" -t "$ECR_REPOSITORY_URL:latest" .
           docker push "$ECR_REPOSITORY_URL:$IMAGE_TAG"
           docker push "$ECR_REPOSITORY_URL:latest"
@@ -85,7 +134,6 @@ jobs:
       - name: Register new task definition revision
         id: taskdef
         run: |
-          ECR_REPOSITORY_URL="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
           TASK_DEF_ARN=$(aws ecs describe-services \
             --cluster "$ECS_CLUSTER_NAME" \
             --services "$ECS_SERVICE_NAME" \
