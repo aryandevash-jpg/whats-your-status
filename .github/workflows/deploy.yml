@@ -70,9 +70,12 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Resolve AWS account ID
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"
+
       - name: Build and push Docker image
-        env:
-          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           ECR_REPOSITORY_URL="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
           docker build -t "$ECR_REPOSITORY_URL:$IMAGE_TAG" -t "$ECR_REPOSITORY_URL:latest" .
@@ -81,8 +84,6 @@ jobs:
 
       - name: Register new task definition revision
         id: taskdef
-        env:
-          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           ECR_REPOSITORY_URL="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
           TASK_DEF_ARN=$(aws ecs describe-services \
